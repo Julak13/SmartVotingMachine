@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Voting Machine Updater</title>
+<meta name="description" content="Install firmware updates on the Smart Voting Machine from your browser.">
+<script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
+<style>
+:root{
+  --bg:#0b1020; --bg2:#121a2e; --card:#161f38; --line:#26314f; --txt:#e7ecf6; --mut:#8a97b5;
+  --acc:#5b8cff; --acc2:#22d3a6; --warn:#ffb020; --bad:#ff5d6c; --r:18px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',system-ui,-apple-system,Roboto,sans-serif;color:var(--txt);min-height:100vh;
+  background:radial-gradient(1200px 600px at 80% -10%,#1a2546 0,var(--bg) 60%);background-color:var(--bg);
+  -webkit-font-smoothing:antialiased;line-height:1.55}
+.wrap{max-width:760px;margin:0 auto;padding:36px 16px 60px}
+.brand{display:flex;align-items:center;gap:14px}
+.logo{width:48px;height:48px;border-radius:14px;flex:none;background:linear-gradient(135deg,var(--acc),var(--acc2));
+  display:flex;align-items:center;justify-content:center;font-size:24px}
+h1{font-size:24px;line-height:1.2}
+.sub{color:var(--mut);font-size:14px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:22px;margin-top:18px}
+h2{font-size:16px;margin-bottom:10px}
+.ver{display:inline-block;font-size:12px;padding:4px 10px;border-radius:999px;border:1px solid rgba(34,211,166,.4);
+  color:var(--acc2);margin-left:6px;vertical-align:middle}
+.install{display:flex;flex-direction:column;align-items:flex-start;gap:12px}
+esp-web-install-button button.go{font:inherit;font-weight:600;font-size:16px;color:#fff;border:none;cursor:pointer;
+  padding:14px 26px;border-radius:12px;background:linear-gradient(135deg,var(--acc),#3b6dff)}
+esp-web-install-button button.go:hover{filter:brightness(1.08)}
+.danger{border-color:rgba(255,93,108,.5);background:rgba(255,93,108,.08)}
+.danger b{color:var(--bad)}
+.tip{border-color:rgba(255,176,32,.45);background:rgba(255,176,32,.07)}
+.tip b{color:var(--warn)}
+ol,ul{padding-left:22px}
+li{margin:7px 0}
+a{color:var(--acc)}
+.muted{color:var(--mut);font-size:14px}
+.msg{color:var(--warn);font-size:15px}
+code{background:var(--bg2);border:1px solid var(--line);border-radius:6px;padding:1px 6px;font-size:13px}
+footer{margin-top:28px;color:var(--mut);font-size:13px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="brand">
+    <div class="logo">&#x1F5F3;</div>
+    <div>
+      <h1>Voting Machine Updater</h1>
+      <div class="sub">Install the latest firmware from this page. No Arduino software needed.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Install update <span class="ver" id="ver">v1.1.0</span></h2>
+    <div class="install">
+      <esp-web-install-button manifest="manifest.json">
+        <button slot="activate" class="go">&#x26A1; Connect &amp; install</button>
+        <span slot="unsupported" class="msg">This browser can't talk to USB devices. Open this page in <b>Google Chrome</b> or <b>Microsoft Edge</b> on a laptop or desktop computer (not a phone).</span>
+        <span slot="not-allowed" class="msg">This page must be opened over https:// to use USB.</span>
+      </esp-web-install-button>
+      <div class="muted">Takes about 30 seconds. Keep the cable plugged in until it reaches 100%.</div>
+    </div>
+  </div>
+
+  <div class="card danger">
+    <h2>&#x26A0; Do NOT erase</h2>
+    <p>During installation you will see a box called <b>"Erase device"</b>. <b>Leave it unticked.</b>
+      Ticking it deletes every registered voter, candidate and vote on the machine.</p>
+  </div>
+
+  <div class="card">
+    <h2>Step by step</h2>
+    <ol>
+      <li>Plug the voting machine's ESP32 board into the laptop with a USB <b>data</b> cable
+        (some cables only charge; if nothing is detected, try another cable).</li>
+      <li>Click <b>Connect &amp; install</b> above. A list of ports appears &mdash; choose the one that says
+        <code>CP210x</code>, <code>CH340</code> or <code>USB Serial</code>, then click <b>Connect</b>.</li>
+      <li>Click <b>Install</b>. When asked about erasing, leave <b>"Erase device" unticked</b>, then continue.</li>
+      <li>Wait until it shows the install is complete.</li>
+      <li>Press the <b>EN</b> (reset) button on the board, or unplug and replug it. The machine plays its
+        ready chime and shows <i>System Ready</i>.</li>
+      <li>Check: on the dashboard, open <b>Settings &rarr; Device</b>. It should say <b>Firmware v1.1.0</b>.</li>
+    </ol>
+  </div>
+
+  <div class="card tip">
+    <h2>If it gets stuck on "Connecting" or fails to start</h2>
+    <p>This board needs a little help to enter update mode. Click <b>Install</b> again and
+      <b>hold the BOOT button</b> on the ESP32 board; let go as soon as the progress starts moving.</p>
+  </div>
+
+  <div class="card">
+    <h2>Before the first update (one time)</h2>
+    <ul>
+      <li>Use <b>Chrome</b> or <b>Edge</b> on Windows, Mac or Linux. Phones and iPads cannot do this.</li>
+      <li>If no port appears in the list, install the USB driver for the board's chip, then try again:
+        <ul>
+          <li><a href="https://www.wch-ic.com/downloads/CH341SER_EXE.html" target="_blank" rel="noopener">CH340 driver (WCH)</a></li>
+          <li><a href="https://www.silabs.com/developer-tools/usb-to-uart-bridge-vcp-drivers" target="_blank" rel="noopener">CP210x driver (Silicon Labs)</a></li>
+        </ul>
+      </li>
+      <li>Close the Arduino IDE's Serial Monitor (or any program using the port) before installing.</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h2>What's new in v1.1.0</h2>
+    <ul>
+      <li>The machine no longer freezes if a voter walks away on the candidate screen (30-second timeout).</li>
+      <li>NFC cards are read reliably first time; the reader resets itself if it stops responding.</li>
+      <li>Fingerprints: a smudged touch is retried instead of rejected; a finger already registered to someone else is refused at enrollment.</li>
+      <li>"Card already registered to <i>name</i>" tells you exactly which voter to delete.</li>
+      <li>Deleting a voter also erases their fingerprint; leftovers from older versions are cleaned up once.</li>
+      <li>New <b>Settings</b> tab: send results to <b>Telegram</b> (automatically when the election stops), connect to an internet Wi-Fi, and see device health.</li>
+      <li>The dashboard can be added to a phone's home screen like an app.</li>
+    </ul>
+  </div>
+
+  <footer>
+    Smart Voting Machine &middot; firmware for ESP32 DevKit V1 &middot;
+    <a href="https://github.com/Julak13/SmartVotingMachine" target="_blank" rel="noopener">source code</a>
+  </footer>
+</div>
+</body>
+</html>

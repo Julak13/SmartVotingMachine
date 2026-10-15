@@ -22,5 +22,8 @@ public:
 
 private:
   LiquidCrystal_I2C _lcd{LCD_ADDR, LCD_COLS, LCD_ROWS};
+  String   _line1, _line2;              // what is on the glass right now
+  uint32_t _lastFull = 0;
   String fit(const String& s);          // pad / truncate to LCD_COLS
+  void   writeLines(const String& a, const String& b);
 };

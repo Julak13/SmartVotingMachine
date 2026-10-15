@@ -15,14 +15,23 @@ public:
   uint16_t templateCount();
 
   // 1:N identification. Returns matched template id (>0) or:
-  //   0  -> no finger present
-  //  -1  -> finger present but no/low-confidence match
+  //   FP_NO_FINGER   no finger present
+  //   FP_NO_MATCH    a clean image that matches no template (or matches
+  //                  below FP_MIN_CONFIDENCE) - a real "no"
+  //   FP_BAD_IMAGE   smudged / partial / comms hiccup - try again, this is
+  //                  NOT evidence that the finger is wrong
+  static constexpr int FP_NO_FINGER = 0;
+  static constexpr int FP_NO_MATCH  = -1;
+  static constexpr int FP_BAD_IMAGE = -2;
   int  search();
   int  lastConfidence() const { return _conf; }
 
   // ---- enrollment primitives (driven step-by-step by the controller) --
   int  captureImage();           // FINGERPRINT_OK / NOFINGER / error code
   bool toTemplate(uint8_t slot); // 1 or 2
+  // After toTemplate(1): id of a stored template matching that finger,
+  // or 0 if the finger is not enrolled yet.
+  int  findTemplate();
   bool createModel();            // combine slot 1+2
   bool store(uint16_t id);       // write template to flash slot <id>
   bool remove(uint16_t id);      // erase template

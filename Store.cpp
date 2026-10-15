@@ -104,6 +104,22 @@ bool Store::uidExists(const String& uid) {
   Guard g(this); return findVoterByUid(uid) != nullptr;
 }
 
+String Store::voterNameForUid(const String& uid) {
+  Guard g(this);
+  Voter* v = findVoterByUid(uid);
+  return v ? v->name : String("");
+}
+
+String Store::voterNameForFid(uint16_t fid) {
+  Guard g(this);
+  Voter* v = findVoterByFid(fid);
+  return v ? v->name : String("");
+}
+
+bool Store::fidInUse(uint16_t fid) {
+  Guard g(this); return findVoterByFid(fid) != nullptr;
+}
+
 uint16_t Store::nextFreeFid() {
   Guard g(this);
   for (uint16_t id = FP_MIN_ID; id <= FP_MAX_ID; ++id)

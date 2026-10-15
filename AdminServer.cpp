@@ -3,11 +3,29 @@
 // =====================================================================
 #include "AdminServer.h"
 #include "Store.h"
+#include "Uplink.h"
 #include "config.h"
 #include "web_assets.h"
+#include "web_icon.h"
 #include <WiFi.h>
+#include "esp_system.h"
 
 AdminServer adminServer;
+
+static const char* resetReasonStr() {
+  switch (esp_reset_reason()) {
+    case ESP_RST_POWERON:   return "Power on";
+    case ESP_RST_BROWNOUT:  return "Brownout - the power supply dipped. Use a stronger 5 V supply.";
+    case ESP_RST_PANIC:     return "Crash (software panic)";
+    case ESP_RST_INT_WDT:
+    case ESP_RST_TASK_WDT:
+    case ESP_RST_WDT:       return "Watchdog - the firmware stopped responding";
+    case ESP_RST_SW:        return "Software restart";
+    case ESP_RST_EXT:       return "Reset button";
+    case ESP_RST_DEEPSLEEP: return "Wake from sleep";
+    default:                return "Unknown";
+  }
+}
 
 // ---------------------------------------------------------------------
 static String randomToken() {
@@ -21,14 +39,10 @@ static String randomToken() {
 void AdminServer::begin(VotingController* vc) {
   _vc = vc;
 
-  WiFi.mode(WIFI_AP);
-  WiFi.softAP(AP_SSID, AP_PASSWORD, AP_CHANNEL, false, AP_MAX_CLIENTS);
-  delay(100);
-  Serial.printf("[Web] SoftAP \"%s\"  IP: %s\n",
-                AP_SSID, WiFi.softAPIP().toString().c_str());
-
+  uplink.beginWifi();          // own access point, plus router if configured
   routes();
   _srv.begin();
+  uplink.begin();              // Telegram / router worker on core 0
 }
 
 void AdminServer::handle() { _srv.handleClient(); }
@@ -74,6 +88,19 @@ void AdminServer::routes() {
   _srv.on("/api/election/start", HTTP_POST, [this]{ hElection("start"); });
   _srv.on("/api/election/stop",  HTTP_POST, [this]{ hElection("stop"); });
   _srv.on("/api/election/reset", HTTP_POST, [this]{ hElection("reset"); });
+
+  // "Add to Home Screen" support - public, contain nothing sensitive
+  _srv.on("/manifest.json", HTTP_GET, [this]{ hManifest(); });
+  _srv.on("/icon.png",      HTTP_GET, [this]{ hIcon(); });
+
+  _srv.on("/api/device",         HTTP_GET,  [this]{ hDevice(); });
+  _srv.on("/api/settings",       HTTP_GET,  [this]{ hSettingsGet(); });
+  _srv.on("/api/settings",       HTTP_POST, [this]{ hSettingsSave(); });
+  _srv.on("/api/uplink/status",  HTTP_GET,  [this]{ hUplinkStatus(); });
+  _srv.on("/api/telegram/test",  HTTP_POST, [this]{ hTgTest(); });
+  _srv.on("/api/telegram/send",  HTTP_POST, [this]{ hTgSend(); });
+  _srv.on("/api/telegram/detect",HTTP_POST, [this]{ hTgDetect(); });
+  _srv.on("/api/wifi/scan",      HTTP_POST, [this]{ hWifiScan(); });
 
   _srv.onNotFound([this]{ _srv.send(404, "text/plain", "Not found"); });
 }
@@ -175,6 +202,7 @@ void AdminServer::hDelVoter() {
   if (!readJson(body)) { sendJson(400, "{\"ok\":false}"); return; }
   uint16_t fid = (uint16_t)(body["fid"] | 0);
   bool ok = store.deleteVoter(fid);
+  if (ok) _vc->queueTemplateDelete(fid);   // erase their fingerprint too
   JsonDocument res; res["ok"] = ok; if (!ok) res["error"] = "Delete failed";
   String out; serializeJson(res, out); sendJson(200, out);
 }
@@ -216,8 +244,101 @@ void AdminServer::hResults() {
 
 void AdminServer::hElection(const String& action) {
   if (!authed()) { sendJson(401, "{}"); return; }
-  if      (action == "start") store.setStatus(ELECTION_RUNNING);
-  else if (action == "stop")  store.setStatus(ELECTION_STOPPED);
-  else if (action == "reset") store.resetElection();
+  ElectionStatus before = store.status();
+  if (action == "start") {
+    store.setStatus(ELECTION_RUNNING);
+    if (before != ELECTION_RUNNING) uplink.electionStarted();
+  } else if (action == "stop") {
+    store.setStatus(ELECTION_STOPPED);
+    // Only on a real transition, so pressing Stop twice can't send twice.
+    if (before == ELECTION_RUNNING) uplink.electionStopped();
+  } else if (action == "reset") {
+    store.resetElection();
+  }
   sendJson(200, "{\"ok\":true}");
+}
+
+// ---------------------------------------------------------------------
+//  Home-screen ("install as app") support
+// ---------------------------------------------------------------------
+void AdminServer::hManifest() {
+  _srv.send(200, "application/manifest+json",
+    "{\"name\":\"Voting Machine Admin\",\"short_name\":\"Voting\","
+    "\"start_url\":\"/\",\"display\":\"standalone\","
+    "\"background_color\":\"#0b1020\",\"theme_color\":\"#0b1020\","
+    "\"icons\":[{\"src\":\"/icon.png\",\"sizes\":\"192x192\",\"type\":\"image/png\"}]}");
+}
+
+void AdminServer::hIcon() {
+  _srv.sendHeader("Cache-Control", "max-age=604800");
+  _srv.send_P(200, "image/png", (const char*)ICON_PNG, ICON_PNG_LEN);
+}
+
+// ---------------------------------------------------------------------
+//  Device health - the first thing to check when someone reports the
+//  machine as "slow" or "unresponsive" (a brownout shows up here).
+// ---------------------------------------------------------------------
+void AdminServer::hDevice() {
+  if (!authed()) { sendJson(401, "{}"); return; }
+  JsonDocument d;
+  d["fw"]            = FW_VERSION;
+  d["uptime"]        = (uint32_t)(millis() / 1000);
+  d["reset"]         = resetReasonStr();
+  d["heap"]          = ESP.getFreeHeap();
+  d["minHeap"]       = ESP.getMinFreeHeap();
+  d["nfc"]           = _vc->nfcReady();
+  d["fp"]            = _vc->fpReady();
+  d["nfcRecoveries"] = _vc->nfcRecoveries();
+  d["apClients"]     = WiFi.softAPgetStationNum();
+  String out; serializeJson(d, out); sendJson(200, out);
+}
+
+// ---------------------------------------------------------------------
+//  Internet + Telegram
+// ---------------------------------------------------------------------
+void AdminServer::sendOkOrError(bool ok, const String& err) {
+  JsonDocument res; res["ok"] = ok; if (!ok) res["error"] = err;
+  String out; serializeJson(res, out); sendJson(200, out);
+}
+
+void AdminServer::hSettingsGet() {
+  if (!authed()) { sendJson(401, "{}"); return; }
+  JsonDocument d;
+  uplink.settingsJson(d.to<JsonObject>());
+  String out; serializeJson(d, out); sendJson(200, out);
+}
+
+void AdminServer::hSettingsSave() {
+  if (!authed()) { sendJson(401, "{}"); return; }
+  JsonDocument body;
+  if (!readJson(body)) { sendJson(400, "{\"ok\":false,\"error\":\"bad request\"}"); return; }
+  String err;
+  sendOkOrError(uplink.saveSettings(body, err), err);
+}
+
+void AdminServer::hUplinkStatus() {
+  if (!authed()) { sendJson(401, "{}"); return; }
+  JsonDocument d;
+  uplink.statusJson(d.to<JsonObject>());
+  String out; serializeJson(d, out); sendJson(200, out);
+}
+
+void AdminServer::hTgTest() {
+  if (!authed()) { sendJson(401, "{}"); return; }
+  String err; sendOkOrError(uplink.requestTest(err), err);
+}
+
+void AdminServer::hTgSend() {
+  if (!authed()) { sendJson(401, "{}"); return; }
+  String err; sendOkOrError(uplink.requestResults(err), err);
+}
+
+void AdminServer::hTgDetect() {
+  if (!authed()) { sendJson(401, "{}"); return; }
+  String err; sendOkOrError(uplink.requestDetectChat(err), err);
+}
+
+void AdminServer::hWifiScan() {
+  if (!authed()) { sendJson(401, "{}"); return; }
+  String err; sendOkOrError(uplink.requestScan(err), err);
 }

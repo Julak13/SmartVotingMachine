@@ -24,17 +24,22 @@ uint16_t FpSensor::templateCount() {
 }
 
 int FpSensor::search() {
-  if (!_ok) return -1;
+  if (!_ok) return FP_BAD_IMAGE;
 
   int p = _f.getImage();
-  if (p == FINGERPRINT_NOFINGER) return 0;
-  if (p != FINGERPRINT_OK)       return -1;
+  if (p == FINGERPRINT_NOFINGER) return FP_NO_FINGER;
+  if (p != FINGERPRINT_OK)       return FP_BAD_IMAGE;
 
-  if (_f.image2Tz() != FINGERPRINT_OK)        return -1;
-  if (_f.fingerFastSearch() != FINGERPRINT_OK) return -1;
+  // A failed feature extraction means the image was unusable (too messy,
+  // too few features) - not that the finger is wrong.
+  if (_f.image2Tz() != FINGERPRINT_OK) return FP_BAD_IMAGE;
+
+  p = _f.fingerFastSearch();
+  if (p == FINGERPRINT_NOTFOUND) return FP_NO_MATCH;
+  if (p != FINGERPRINT_OK)       return FP_BAD_IMAGE;
 
   _conf = _f.confidence;
-  if (_conf < FP_MIN_CONFIDENCE) return -1;
+  if (_conf < FP_MIN_CONFIDENCE) return FP_NO_MATCH;
   return _f.fingerID;
 }
 
@@ -45,6 +50,12 @@ int FpSensor::captureImage() {
 
 bool FpSensor::toTemplate(uint8_t slot) {
   return _ok && _f.image2Tz(slot) == FINGERPRINT_OK;
+}
+
+int FpSensor::findTemplate() {
+  if (!_ok) return 0;
+  if (_f.fingerFastSearch() != FINGERPRINT_OK) return 0;   // searches buffer 1
+  return _f.fingerID;
 }
 
 bool FpSensor::createModel() {

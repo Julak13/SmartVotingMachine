@@ -43,6 +43,19 @@ public:
   void   enrollCancel();
   String enrollStatusJson();
 
+  // A deleted voter's fingerprint template lives in the AS608, which only
+  // this task may talk to. The web task queues the slot; run() erases it.
+  void   queueTemplateDelete(uint16_t fid);
+
+  // Boot-time: erase templates no voter owns (left by older firmware).
+  // Call from setup(), before the tasks start.
+  void   sweepOrphanTemplates();
+
+  // Read-only hardware health for the dashboard (plain reads of flags).
+  bool     nfcReady() const      { return _nfc && _nfc->ready(); }
+  bool     fpReady()  const      { return _fp && _fp->ready(); }
+  uint32_t nfcRecoveries() const { return _nfc ? _nfc->recoveries() : 0; }
+
 private:
   Display*   _d   = nullptr;
   FpSensor*  _fp  = nullptr;
@@ -53,12 +66,29 @@ private:
   Feedback*  _fb  = nullptr;
 
   EnrollState       _en;
-  SemaphoreHandle_t _enMtx = nullptr;
+  SemaphoreHandle_t _enMtx = nullptr;   // guards _en and the template queue
+
+  static const uint8_t TPL_QUEUE = 16;
+  uint16_t _tplDel[TPL_QUEUE];
+  uint8_t  _tplN = 0;
+  void processTemplateDeletes();
+
+  // A card still lying on the reader after its session must not start a
+  // new one; it is ignored until it has been lifted for a moment.
+  String   _lastUid;
+  uint32_t _lastSeenMs = 0;
+
+  uint32_t _lingerMs   = 0;   // last time a used card was seen still lying there
 
   // ---- voting flow ----
+  static const int SELECT_NONE    = 0;    // no candidates configured
+  static const int SELECT_TIMEOUT = -1;   // voter walked away
+  static const int FPCHK_OK       = 1;
+  static const int FPCHK_MISMATCH = 0;    // clean reads, not this voter
+  static const int FPCHK_TIMEOUT  = -1;   // no usable finger in time
   void handleVoter(const String& uid);
-  bool runFingerprintCheck(uint16_t expectedFid);   // returns match ok
-  int  selectCandidate();        // returns candidate id, or 0 if aborted
+  int  runFingerprintCheck(uint16_t expectedFid);   // FPCHK_*
+  int  selectCandidate();        // candidate id (>0) or SELECT_NONE/TIMEOUT
   void flash(const String& l1, const String& l2, uint32_t ms);
 
   // ---- enrollment flow ----

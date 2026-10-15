@@ -40,6 +40,18 @@ private:
   void hEnrollCancel();
   void hResults();
   void hElection(const String& action);
+  // device + Telegram / internet settings
+  void hManifest();
+  void hIcon();
+  void hDevice();
+  void hSettingsGet();
+  void hSettingsSave();
+  void hUplinkStatus();
+  void hTgTest();
+  void hTgSend();
+  void hTgDetect();
+  void hWifiScan();
+  void sendOkOrError(bool ok, const String& err);
 };
 
 extern AdminServer adminServer;

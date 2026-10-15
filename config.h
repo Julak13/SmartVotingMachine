@@ -6,8 +6,11 @@
 // =====================================================================
 #include <Arduino.h>
 
+#define FW_NAME     "SmartVotingMachine"
+#define FW_VERSION  "1.1.0"
+
 // ---------------------------------------------------------------------
-//  WiFi Access Point  (the machine is fully offline - it is its OWN AP)
+//  WiFi Access Point  (the machine is its OWN network - always on)
 // ---------------------------------------------------------------------
 #define AP_SSID         "VotingMachine"   // network the admin connects to
 #define AP_PASSWORD     "vote12345"       // WPA2 key, MUST be >= 8 chars
@@ -75,13 +78,43 @@
 // ---------------------------------------------------------------------
 //  Behaviour / timing
 // ---------------------------------------------------------------------
-#define NFC_READ_TIMEOUT_MS    250   // per poll while waiting for a card
 #define FP_MIN_CONFIDENCE      30    // reject weak fingerprint matches
 #define SCREEN_MSG_MS          2200  // how long status screens stay up
 #define ENROLL_NFC_TIMEOUT_MS  15000 // wait for card during enrollment
 #define ENROLL_FP_TIMEOUT_MS   15000 // wait for finger during enrollment
 
+// NFC. The PN532 is told to give up its own card search after
+// NFC_PASSIVE_RETRIES attempts, which must end well inside
+// NFC_READ_TIMEOUT_MS. That ordering matters: if our wait expires while the
+// chip is still searching (its default is "search forever"), the next
+// command collides with the unfinished one and reads fail until the two
+// drift back in step. 5 attempts stays inside 1.5 s even at a pessimistic
+// ~250 ms per attempt; the loop simply polls again straight away.
+#define NFC_READ_TIMEOUT_MS    1500  // host-side safety limit for one poll
+#define NFC_PASSIVE_RETRIES    0x05  // chip-side search limit
+#define NFC_HEALTH_MS          5000  // idle self-test; hardware-reset if silent
+#define CARD_REPEAT_IGNORE_MS  2500  // a card left on the reader is ignored
+                                     // until it has been lifted this long
+
+// Voter session
+#define ACCREDIT_WAIT_MS       20000 // time to press OK after accreditation
+#define CONFIRM_WAIT_MS        15000 // time to confirm before returning to list
+#define SESSION_IDLE_MS        30000 // no button press for this long on the
+                                     // candidate list -> session cancelled
+#define FP_VERIFY_TIMEOUT_MS   15000 // per attempt, while waiting for a finger
+#define FP_MAX_ATTEMPTS        3     // clean, non-matching reads before reject
+
+// Optional internet uplink - used ONLY to send results to Telegram.
+// Voting never depends on it; the access point above stays up regardless.
+#define STA_CONNECT_TIMEOUT_MS 20000   // give up one connection attempt
+#define STA_RETRY_MS           300000  // then retry this often (5 min) so a
+                                       // missing router can't keep the radio
+                                       // scanning and disturb the admin AP
+#define TG_RETRY_MS            60000   // re-send undelivered final results
+#define TG_MAX_RETRIES         30
+
 // LittleFS data files
 #define FILE_CANDIDATES  "/candidates.json"
 #define FILE_VOTERS      "/voters.json"
 #define FILE_STATE       "/state.json"
+#define FILE_UPLINK      "/uplink.json"

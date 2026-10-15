@@ -1,19 +1,23 @@
 // =====================================================================
 //  SmartVotingMachine.ino  -  ESP32 DevKit V1
 //
-//  Secure, fully-offline electronic voting machine.
+//  Secure electronic voting machine. Voting is fully offline.
 //    - Voter interface : 16x2 I2C LCD + UP/DOWN/OK buttons
 //    - Authentication  : PN532 NFC card  +  AS608 fingerprint (two-factor)
 //    - Admin dashboard : self-hosted WiFi SoftAP + responsive web UI
 //    - Storage         : LittleFS (internal flash) - survives power loss
+//    - Optional        : router connection, used only to send results
+//                        to Telegram (voting never depends on it)
 //
-//  Two FreeRTOS tasks:
+//  FreeRTOS tasks:
 //    voterTask (core 1) - owns LCD/buttons/NFC/fingerprint + state machine
 //    webTask   (core 0) - owns WiFi SoftAP + HTTP server (admin only)
+//    uplink    (core 0) - router link + Telegram sends (started by webTask)
 //  They share data only through the mutex-guarded global `store`.
 // =====================================================================
 #include <Arduino.h>
 #include <Wire.h>
+#include "esp_system.h"
 
 #include "config.h"
 #include "Store.h"
@@ -57,7 +61,8 @@ void webTask(void*) {
 void setup() {
   Serial.begin(115200);
   delay(200);
-  Serial.println(F("\n=== Smart Voting Machine booting ==="));
+  Serial.println(F("\n=== Smart Voting Machine v" FW_VERSION " booting ==="));
+  Serial.printf("[boot] reset reason code %d\n", (int)esp_reset_reason());
 
   // --- shared peripherals ---
   Wire.begin(I2C_SDA, I2C_SCL, I2C_FREQ);                 // LCD + PN532
@@ -84,6 +89,7 @@ void setup() {
   }
 
   voting.begin(&display, &fingerprint, &nfc, &btnUp, &btnDown, &btnOk, &feedback);
+  voting.sweepOrphanTemplates();
 
   // --- "system ready" chime + LED lamp-test (before tasks take over) ---
   display.show("Smart Voting", "System Ready");

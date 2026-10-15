@@ -37,6 +37,9 @@ public:
   bool addVoter(const String& name, uint16_t fid, const String& uid);
   bool deleteVoter(uint16_t fid);
   bool uidExists(const String& uid);
+  String voterNameForUid(const String& uid);   // "" if no voter owns it
+  String voterNameForFid(uint16_t fid);        // "" if no voter owns it
+  bool fidInUse(uint16_t fid);
   uint16_t nextFreeFid();                 // 0 if full / none available
   std::vector<Voter> snapshotVoters();
 

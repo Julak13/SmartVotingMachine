@@ -4,6 +4,8 @@ build/
 *.elf
 *.hex
 *.map
+# ...except the released firmware the browser updater (GitHub Pages) serves
+!docs/firmware/*.bin
 
 # Arduino IDE
 .vscode/

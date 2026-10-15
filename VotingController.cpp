@@ -26,6 +26,7 @@ void VotingController::flash(const String& l1, const String& l2, uint32_t ms) {
 void VotingController::run() {
   for (;;) {
     _fb->idle();                 // clear LEDs/buzzer between interactions
+    processTemplateDeletes();    // before enrollment, which may reuse a slot
 
     // 1) Admin-requested enrollment takes priority over idle waiting.
     bool wantEnroll;
@@ -34,6 +35,10 @@ void VotingController::run() {
     xSemaphoreGive(_enMtx);
     if (wantEnroll) { runEnrollment(); continue; }
 
+    // Keep the reader healthy in every election state, so it is ready the
+    // moment polls open and for enrollment.
+    _nfc->maintain();
+
     // 2) Election must be open.
     if (store.status() != ELECTION_RUNNING) {
       _d->show("Election Closed", "Please wait...");
@@ -41,12 +46,74 @@ void VotingController::run() {
       continue;
     }
 
-    // 3) Idle: wait for an NFC card.
-    _d->show("Smart Voting", "Tap NFC Card");
-    String uid = _nfc->readUID(NFC_READ_TIMEOUT_MS);
-    if (uid.length() == 0) { vTaskDelay(pdMS_TO_TICKS(10)); continue; }
+    if (!_nfc->ready()) {        // maintain() keeps trying to bring it back
+      _d->show("Card reader", "not responding");
+      vTaskDelay(pdMS_TO_TICKS(250));
+      continue;
+    }
 
-    handleVoter(uid);
+    // 3) Idle: wait for an NFC card.
+    String uid = _nfc->readUID(NFC_READ_TIMEOUT_MS);
+    uint32_t now = millis();
+    if (uid.length()) {
+      if (uid == _lastUid && (now - _lastSeenMs) < CARD_REPEAT_IGNORE_MS) {
+        _lastSeenMs = now;       // the card just used is still lying there
+        _lingerMs   = now;
+      } else {
+        handleVoter(uid);
+        _lastUid    = uid;
+        _lastSeenMs = millis();
+        _lingerMs   = 0;
+        continue;
+      }
+    }
+    // "Remove card" only while a used card is actually still on the reader.
+    bool lingering = _lingerMs && (millis() - _lingerMs) < 700;
+    _d->show("Smart Voting", lingering ? "Remove card" : "Tap NFC Card");
+    if (!uid.length()) vTaskDelay(pdMS_TO_TICKS(10));
+  }
+}
+
+// ---------------------------------------------------------------------
+//  Fingerprint templates of deleted voters
+// ---------------------------------------------------------------------
+// Firmware before v1.1.0 never erased a deleted voter's template. If that
+// person was enrolled again, the sensor holds two copies of their finger and
+// may report the old slot, so they could never vote. Runs once at boot.
+void VotingController::sweepOrphanTemplates() {
+  if (!_fp->ready()) return;
+  uint32_t voters = store.totalVoters();
+  uint16_t stored = _fp->templateCount();
+  // Only when the sensor holds more templates than there are voters - and
+  // never with an empty voter list, which could equally mean voters.json
+  // failed to load; wiping every fingerprint then would be unrecoverable.
+  if (voters == 0 || stored <= voters) return;
+
+  _d->show("Tidying sensor", "please wait...");
+  for (uint16_t id = FP_MIN_ID; id <= FP_MAX_ID; ++id)
+    if (!store.fidInUse(id)) _fp->remove(id);
+  Serial.printf("[FP] %u templates for %u voters - cleared unused slots, now %u\n",
+                stored, (unsigned)voters, _fp->templateCount());
+}
+
+void VotingController::queueTemplateDelete(uint16_t fid) {
+  xSemaphoreTake(_enMtx, portMAX_DELAY);
+  if (_tplN < TPL_QUEUE) _tplDel[_tplN++] = fid;
+  xSemaphoreGive(_enMtx);
+}
+
+void VotingController::processTemplateDeletes() {
+  uint16_t pending[TPL_QUEUE];
+  uint8_t  n;
+  xSemaphoreTake(_enMtx, portMAX_DELAY);
+  n = _tplN;
+  for (uint8_t i = 0; i < n; ++i) pending[i] = _tplDel[i];
+  _tplN = 0;
+  xSemaphoreGive(_enMtx);
+
+  for (uint8_t i = 0; i < n; ++i) {
+    // Never erase a slot that a voter owns again by now.
+    if (!store.fidInUse(pending[i])) _fp->remove(pending[i]);
   }
 }
 
@@ -72,9 +139,21 @@ void VotingController::handleVoter(const String& uid) {
 
   uint16_t expectedFid = found->fid;
 
+  if (!_fp->ready()) {
+    _fb->denied();
+    flash("Finger sensor", "not responding", SCREEN_MSG_MS);
+    return;
+  }
+
   // --- fingerprint (second factor) ---
   _d->show("Card Accepted", "Place Finger");
-  if (!runFingerprintCheck(expectedFid)) {
+  int fp = runFingerprintCheck(expectedFid);
+  if (fp == FPCHK_TIMEOUT) {
+    _fb->denied();
+    flash("No finger read", "Tap card again", SCREEN_MSG_MS);
+    return;
+  }
+  if (fp != FPCHK_OK) {
     _fb->denied();
     flash("Finger Mismatch", "Access Denied", SCREEN_MSG_MS);
     return;
@@ -87,16 +166,21 @@ void VotingController::handleVoter(const String& uid) {
   {
     uint32_t t0 = millis();
     bool proceed = false;
-    while (millis() - t0 < 15000) {
+    while (millis() - t0 < ACCREDIT_WAIT_MS) {
       if (_ok->pressed()) { proceed = true; break; }
       vTaskDelay(pdMS_TO_TICKS(15));
     }
-    if (!proceed) { _fb->denied(); flash("Session Timeout", "Try again", SCREEN_MSG_MS); return; }
+    if (!proceed) { _fb->denied(); flash("Session Timeout", "Tap card again", SCREEN_MSG_MS); return; }
   }
 
   // --- candidate selection ---
   int candId = selectCandidate();
-  if (candId == 0) { flash("Vote Cancelled", "", SCREEN_MSG_MS); return; }
+  if (candId == SELECT_TIMEOUT) {
+    _fb->denied();
+    flash("Session Timeout", "Tap card again", SCREEN_MSG_MS);
+    return;
+  }
+  if (candId == SELECT_NONE) return;          // "No Candidates" already shown
 
   // --- record (atomic, re-checks voted flag under lock) ---
   int rc = store.castVote(uid, expectedFid, (uint16_t)candId);
@@ -108,16 +192,29 @@ void VotingController::handleVoter(const String& uid) {
   }
 }
 
-bool VotingController::runFingerprintCheck(uint16_t expectedFid) {
+// A smudged or off-centre touch is common on an optical sensor and says
+// nothing about whether the finger is right, so it is simply re-imaged.
+// Only a clean image that is not this voter's finger counts as an attempt.
+int VotingController::runFingerprintCheck(uint16_t expectedFid) {
+  uint8_t  attempts = 0;
   uint32_t t0 = millis();
-  while (millis() - t0 < ENROLL_FP_TIMEOUT_MS) {
+  while (millis() - t0 < FP_VERIFY_TIMEOUT_MS) {
     int id = _fp->search();
-    if (id > 0)  return (uint16_t)id == expectedFid;
-    if (id == 0) { vTaskDelay(pdMS_TO_TICKS(50)); continue; }  // no finger yet
-    // id < 0 -> finger seen but no good match
-    return false;
+    if (id == FpSensor::FP_NO_FINGER || id == FpSensor::FP_BAD_IMAGE) {
+      vTaskDelay(pdMS_TO_TICKS(60));
+      continue;
+    }
+    if (id > 0 && (uint16_t)id == expectedFid) return FPCHK_OK;
+
+    // Clean read, but not this voter's finger (or another voter's).
+    if (++attempts >= FP_MAX_ATTEMPTS) return FPCHK_MISMATCH;
+    _fb->tick();
+    _d->show("Not matched", "Lift, try again");
+    _fp->waitFingerRemoved(4000);
+    _d->show("Card Accepted", "Place Finger");
+    t0 = millis();                        // a fresh window for the next try
   }
-  return false;   // timed out
+  return FPCHK_TIMEOUT;
 }
 
 // ---------------------------------------------------------------------
@@ -125,7 +222,7 @@ bool VotingController::runFingerprintCheck(uint16_t expectedFid) {
 // ---------------------------------------------------------------------
 int VotingController::selectCandidate() {
   std::vector<Candidate> cands = store.snapshotCandidates();
-  if (cands.empty()) { flash("No Candidates", "", SCREEN_MSG_MS); return 0; }
+  if (cands.empty()) { flash("No Candidates", "", SCREEN_MSG_MS); return SELECT_NONE; }
 
   int idx = 0;
   const int n = cands.size();
@@ -140,22 +237,29 @@ int VotingController::selectCandidate() {
   };
   paint();
 
+  // Without this limit a voter who walks away leaves the task here forever:
+  // the booth is dead for everyone after them and enrollment cannot start.
+  uint32_t lastAct = millis();
   for (;;) {
-    if (_up->pressed())   { _fb->tick(); idx = (idx - 1 + n) % n; paint(); }
-    if (_down->pressed()) { _fb->tick(); idx = (idx + 1) % n;     paint(); }
+    if (_up->pressed())   { _fb->tick(); idx = (idx - 1 + n) % n; paint(); lastAct = millis(); }
+    if (_down->pressed()) { _fb->tick(); idx = (idx + 1) % n;     paint(); lastAct = millis(); }
     if (_ok->pressed()) {
-      // confirm
       _fb->tick();
-      _d->show("Confirm vote?", cands[idx].name);
+      lastAct = millis();
+      _d->show(cands[idx].name, "OK=Yes UP/DN=No");
       vTaskDelay(pdMS_TO_TICKS(250));   // small guard so OK isn't double-read
       uint32_t t0 = millis();
+      bool backOut = false;
       for (;;) {
         if (_ok->pressed())   return cands[idx].id;     // OK = confirm
-        if (_up->pressed() || _down->pressed()) { paint(); break; } // cancel
-        if (millis() - t0 > 12000) { paint(); break; }  // timeout -> back
+        if (_up->pressed() || _down->pressed()) { _fb->tick(); backOut = true; break; }
+        if (millis() - t0 > CONFIRM_WAIT_MS) break;     // back to the list
         vTaskDelay(pdMS_TO_TICKS(15));
       }
+      paint();
+      if (backOut) lastAct = millis();
     }
+    if (millis() - lastAct > SESSION_IDLE_MS) return SELECT_TIMEOUT;
     vTaskDelay(pdMS_TO_TICKS(15));
   }
 }
@@ -236,7 +340,8 @@ void VotingController::runEnrollment() {
   };
 
   if (!_fp->ready()) { fail("Fingerprint sensor offline"); return; }
-  if (!_nfc->ready()){ fail("NFC reader offline"); return; }
+  // selfTest() resets a wedged reader rather than giving up on it.
+  if (!_nfc->selfTest()) { fail("NFC reader is not responding - check its wiring and power"); return; }
 
   // ---- step 1: first finger image ----
   setEnroll(1, "Place finger on sensor");
@@ -250,6 +355,19 @@ void VotingController::runEnrollment() {
     }
     if (!got)                 { fail("Timeout waiting for finger"); return; }
     if (!_fp->toTemplate(1))  { fail("Could not read finger (1)"); return; }
+
+    // Refuse a finger that is already enrolled. Two templates of one finger
+    // leave that voter unable to vote: the sensor reports the other slot,
+    // which never matches their card.
+    int dup = _fp->findTemplate();
+    if (dup > 0) {
+      String who = store.voterNameForFid(dup);
+      if (who.length()) {
+        fail("This finger is already registered to " + who + ". Use a different finger or delete that voter.");
+        return;
+      }
+      _fp->remove(dup);     // left behind by a deleted voter - clear it
+    }
   }
 
   // ---- step 2: remove finger ----
@@ -277,18 +395,41 @@ void VotingController::runEnrollment() {
 
   // ---- step 5: capture NFC UID ----
   setEnroll(5, "Tap the NFC card");
+  // Make sure the reader is answering before asking anyone to tap; this
+  // resets it if it has wedged since its last self-test.
+  if (!_nfc->selfTest()) {
+    _fp->remove(fid);
+    fail("NFC reader is not responding - check its wiring and power");
+    return;
+  }
   String uid;
   {
     uint32_t t0 = millis();
     while (millis() - t0 < ENROLL_NFC_TIMEOUT_MS) {
       if (enrollCancelled()) { _fp->remove(fid); fail("Cancelled"); return; }
-      uid = _nfc->readUID(300);
+      uid = _nfc->readUID(NFC_READ_TIMEOUT_MS);
       if (uid.length()) break;
+      _nfc->maintain();
       vTaskDelay(pdMS_TO_TICKS(20));
     }
   }
-  if (uid.length() == 0) { _fp->remove(fid); fail("No card detected"); return; }
-  if (store.uidExists(uid)) { _fp->remove(fid); fail("Card already registered"); return; }
+  if (uid.length() == 0) {
+    _fp->remove(fid);
+    fail("No card detected - hold the card flat on the reader for a second");
+    return;
+  }
+  String owner = store.voterNameForUid(uid);
+  if (owner.length()) {
+    _fp->remove(fid);
+    fail("This card is already registered to " + owner +
+         ". Delete that voter first, or use a different card.");
+    return;
+  }
+
+  // The new voter's card is probably still on the reader. Without this,
+  // if polls are open it would immediately start a voting session.
+  _lastUid    = uid;
+  _lastSeenMs = millis();
 
   // ---- commit voter record ----
   if (!store.addVoter(name, fid, uid)) {

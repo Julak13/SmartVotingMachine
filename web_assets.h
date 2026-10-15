@@ -11,6 +11,14 @@ static const char DASHBOARD_HTML[] PROGMEM = R"HTML(<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<meta name="theme-color" content="#0b1020">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Voting">
+<link rel="manifest" href="/manifest.json">
+<link rel="apple-touch-icon" href="/icon.png">
+<link rel="icon" type="image/png" href="/icon.png">
 <title>Voting Machine | Admin</title>
 <style>
 :root{
@@ -64,6 +72,8 @@ label{display:block;font-size:12px;color:var(--mut);margin:14px 0 6px}
   display:flex;flex-direction:column;align-items:center;gap:3px;transition:.2s}
 .tabs button .ic{font-size:19px}
 .tabs button.active{color:var(--acc)}
+.tabs button{min-width:0;white-space:nowrap;overflow:hidden}
+@media(max-width:400px){.tabs button{font-size:10px;padding:10px 2px 12px}}
 @media(min-width:760px){
   .tabs{position:static;border:1px solid var(--line);border-radius:14px;margin-bottom:18px;
     background:var(--card)}
@@ -131,6 +141,25 @@ h2.sec{font-size:15px;margin:24px 4px 12px;color:var(--txt)}
   z-index:60;animation:rise .3s ease;font-size:14px;max-width:90%}
 @media(min-width:760px){.toast{bottom:24px}}
 
+/* settings */
+.btnrow{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px}
+.chk{display:flex;align-items:center;gap:10px;margin-top:14px;font-size:14px;color:var(--txt)}
+.chk input{width:18px;height:18px;accent-color:var(--acc);flex:none}
+.state{display:flex;align-items:flex-start;gap:9px;font-size:14px;margin-top:14px;line-height:1.45}
+.dotc{width:10px;height:10px;border-radius:50%;background:var(--mut);flex:none;margin-top:5px}
+.dotc.ok{background:var(--ok)} .dotc.warn{background:var(--warn)} .dotc.bad{background:var(--bad)}
+.note{font-size:13px;color:var(--mut);margin-top:10px;line-height:1.55}
+.netlist{margin-top:8px;max-height:230px;overflow:auto}
+.net{display:flex;justify-content:space-between;gap:10px;padding:10px 12px;border:1px solid var(--line);
+  border-radius:10px;background:var(--bg2);margin-bottom:6px;cursor:pointer;font-size:14px}
+.net:hover{border-color:var(--acc)}
+.net .s{color:var(--mut);font-size:12px;flex:none}
+ol.how{margin:4px 0 0 20px;font-size:14px;line-height:1.75}
+ol.how b{color:var(--acc)}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:8px 16px;font-size:14px}
+.kv .k{color:var(--mut)}
+.kv .bad{color:var(--bad)} .kv .good{color:var(--ok)} .kv .warn{color:var(--warn)}
+
 @keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
 @keyframes spin{to{transform:rotate(360deg)}}
 </style>
@@ -166,6 +195,7 @@ h2.sec{font-size:15px;margin:24px 4px 12px;color:var(--txt)}
     <button data-t="cands"    onclick="tab('cands')"><span class="ic">&#x1F464;</span>Candidates</button>
     <button data-t="results"  onclick="tab('results')"><span class="ic">&#x1F4C8;</span>Results</button>
     <button data-t="control"  onclick="tab('control')"><span class="ic">&#x2699;</span>Control</button>
+    <button data-t="settings" onclick="tab('settings')"><span class="ic">&#x1F527;</span>Settings</button>
   </nav>
 
   <!-- Overview -->
@@ -215,6 +245,11 @@ h2.sec{font-size:15px;margin:24px 4px 12px;color:var(--txt)}
       <div id="rTotal" style="font-size:30px;font-weight:700;color:var(--acc)">0</div></div>
     <h2 class="sec">Breakdown</h2>
     <div id="resList" class="card"></div>
+    <h2 class="sec">Telegram</h2>
+    <div class="card">
+      <button class="btn sm green" onclick="tgSend()">&#x2708; Send results to Telegram</button>
+      <div class="state"><span id="rTgDot" class="dotc"></span><span id="rTg">--</span></div>
+    </div>
   </section>
 
   <!-- Control -->
@@ -229,6 +264,72 @@ h2.sec{font-size:15px;margin:24px 4px 12px;color:var(--txt)}
       </div>
       <div class="muted" style="margin-top:12px">Start opens the polls. Stop disables voting. Reset clears all vote counts and voted flags (voters &amp; candidates are kept).</div>
     </div>
+  </section>
+
+  <!-- Settings -->
+  <section id="v-settings" class="hidden">
+    <h2 class="sec">Telegram results</h2>
+    <div class="card">
+      <div class="muted">Sends election results to a Telegram chat. The machine needs a Wi-Fi network with internet (set it below). Voting itself never needs the internet.</div>
+      <label>Bot token</label>
+      <input id="sTok" class="fld" placeholder="123456789:AAH..." autocomplete="off" spellcheck="false">
+      <label>Chat ID</label>
+      <div class="inline">
+        <input id="sChat" class="fld" placeholder="Tap Detect after pressing START in your bot" autocomplete="off">
+        <button class="btn sm ghost" onclick="detectChat()">Detect</button>
+      </div>
+      <div id="sDetect" class="note"></div>
+      <label class="chk"><input type="checkbox" id="sAuto"> Send results automatically when the election is stopped</label>
+      <label class="chk"><input type="checkbox" id="sStart"> Send a message when the polls open</label>
+      <div class="btnrow">
+        <button class="btn sm" onclick="saveTg()">Save</button>
+        <button class="btn sm ghost" onclick="tgTest()">Send test message</button>
+        <button class="btn sm green" onclick="tgSend()">Send results now</button>
+      </div>
+      <div class="state"><span id="tgDot" class="dotc"></span><span id="tgState">--</span></div>
+    </div>
+
+    <h2 class="sec">How to set up Telegram (one time)</h2>
+    <div class="card">
+      <ol class="how">
+        <li>Open Telegram and search for <b>@BotFather</b>.</li>
+        <li>Send <b>/newbot</b>, then choose a name and a username that ends in "bot".</li>
+        <li>BotFather replies with a <b>token</b>. Paste it into <b>Bot token</b> above and tap <b>Save</b>.</li>
+        <li>Open your new bot in Telegram and press <b>START</b>. (For a group: add the bot to the group and send any message there.)</li>
+        <li>Tap <b>Detect</b>. The chat ID fills in by itself. Then tap <b>Send test message</b>.</li>
+      </ol>
+      <div class="note">Make sure the machine is connected to an internet Wi-Fi first (next section).</div>
+    </div>
+
+    <h2 class="sec">Internet Wi-Fi</h2>
+    <div class="card">
+      <div class="muted">The router the machine uses to reach Telegram. The VotingMachine network stays on for this dashboard.</div>
+      <label>Network name</label>
+      <div class="inline">
+        <input id="sSsid" class="fld" placeholder="Wi-Fi name" autocomplete="off" spellcheck="false">
+        <button class="btn sm ghost" onclick="scanWifi()">Scan</button>
+      </div>
+      <div id="netList" class="netlist"></div>
+      <label>Password</label>
+      <input id="sPass" class="fld" type="password" placeholder="Wi-Fi password" autocomplete="new-password">
+      <div class="btnrow">
+        <button class="btn sm" onclick="saveWifi()">Save &amp; connect</button>
+        <button class="btn sm ghost" onclick="forgetWifi()">Disconnect</button>
+      </div>
+      <div class="state"><span id="wDot" class="dotc"></span><span id="wState">--</span></div>
+      <div class="note">When the machine joins your router, your phone may drop off the VotingMachine Wi-Fi for a few seconds and reconnect. That is normal.</div>
+    </div>
+
+    <h2 class="sec">Use it like an app</h2>
+    <div class="card">
+      <div class="note" style="margin-top:0">Add this dashboard to your phone's home screen.<br>
+        <b>Android (Chrome):</b> menu &#8942; &rarr; <i>Add to Home screen</i>.<br>
+        <b>iPhone (Safari):</b> Share &rarr; <i>Add to Home Screen</i>.<br>
+        Open it while your phone is connected to the <b>VotingMachine</b> Wi-Fi.</div>
+    </div>
+
+    <h2 class="sec">Device</h2>
+    <div class="card"><div id="devInfo" class="kv"><span class="k">Loading...</span><span></span></div></div>
   </section>
 </main>
 
@@ -245,13 +346,19 @@ h2.sec{font-size:15px;margin:24px 4px 12px;color:var(--txt)}
       <div class="stp" data-s="4"><div class="dot">4</div><div>Saving fingerprint template</div></div>
       <div class="stp" data-s="5"><div class="dot">5</div><div>Tap the NFC card</div></div>
     </div>
+    <button id="enRetry" class="btn hidden" onclick="retryEnroll()">Try again</button>
     <button id="enClose" class="btn ghost hidden" onclick="closeEnroll()">Close</button>
     <button id="enCancel" class="btn red" onclick="cancelEnroll()">Cancel</button>
   </div>
 </div>
 
 <script>
-let TOKEN = localStorage.getItem('vm_token') || '';
+// Browser storage can be blocked (private mode, some in-app browsers); the
+// dashboard must still work - it just asks for the password each visit.
+function lsGet(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } }
+function lsSet(k,v){ try{ localStorage.setItem(k,v); }catch(e){} }
+function lsDel(k){ try{ localStorage.removeItem(k); }catch(e){} }
+let TOKEN = lsGet('vm_token') || '';
 let enrollTimer = null, refreshTimer = null;
 
 function api(path, opts){
@@ -272,11 +379,11 @@ function doLogin(){
   const pw=document.getElementById('pw').value;
   fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({password:pw})}).then(r=>r.json()).then(d=>{
-    if(d.ok){ TOKEN=d.token; localStorage.setItem('vm_token',TOKEN); enterApp(); }
+    if(d.ok){ TOKEN=d.token; lsSet('vm_token',TOKEN); enterApp(); }
     else document.getElementById('loginErr').textContent='Incorrect password';
   }).catch(()=>document.getElementById('loginErr').textContent='Connection error');
 }
-function logout(){ TOKEN=''; localStorage.removeItem('vm_token');
+function logout(){ TOKEN=''; lsDel('vm_token');
   clearInterval(refreshTimer);
   document.getElementById('app').classList.add('hidden');
   document.getElementById('login').classList.remove('hidden'); }
@@ -289,10 +396,13 @@ function enterApp(){
 }
 
 /* ---- tabs ---- */
+let curTab='overview';
 function tab(name){
+  curTab=name;
   document.querySelectorAll('.tabs button').forEach(b=>b.classList.toggle('active',b.dataset.t===name));
-  ['overview','voters','cands','results','control'].forEach(s=>
+  ['overview','voters','cands','results','control','settings'].forEach(s=>
     document.getElementById('v-'+s).classList.toggle('hidden',s!==name));
+  if(name==='settings') loadSettings();
   refreshAll();
 }
 
@@ -302,6 +412,8 @@ function refreshAll(){
   jget('/api/voters').then(renderVoters).catch(()=>{});
   jget('/api/candidates').then(renderCands).catch(()=>{});
   jget('/api/results').then(renderResults).catch(()=>{});
+  if(curTab==='settings'||curTab==='results') refreshUplink();
+  if(curTab==='settings') jget('/api/device').then(renderDevice).catch(()=>{});
 }
 
 function statusText(s){return s==='running'?'Polls Open':s==='stopped'?'Polls Closed':'Not Started';}
@@ -379,13 +491,22 @@ function election(a){ jpost('/api/election/'+a).then(d=>{toast(d.ok?('Election '
 function confirmReset(){ if(confirm('Reset election? All vote counts and voted flags will be cleared.')) election('reset'); }
 
 /* ---- enrollment ---- */
+let lastEnrollName='';
 function startEnroll(){
   const name=document.getElementById('vName').value.trim();
   if(!name){toast('Enter a name first');return;}
+  beginEnroll(name);
+}
+function retryEnroll(){ if(lastEnrollName) beginEnroll(lastEnrollName); }
+function beginEnroll(name){
   jpost('/api/voters/enroll',{name}).then(d=>{
     if(!d.ok){toast(d.error||'Failed');return;}
+    lastEnrollName=name;
     document.getElementById('vName').value='';
     document.getElementById('enName').textContent=name;
+    document.getElementById('enMsg').textContent='Starting...';
+    document.querySelectorAll('.stp').forEach(s=>s.classList.remove('done','cur'));
+    document.getElementById('enRetry').classList.add('hidden');
     document.getElementById('enClose').classList.add('hidden');
     document.getElementById('enCancel').classList.remove('hidden');
     document.getElementById('enSpin').classList.remove('hidden');
@@ -408,6 +529,7 @@ function pollEnroll(){
         document.getElementById('enSpin').classList.add('hidden');
         document.getElementById('enClose').classList.remove('hidden');
         document.getElementById('enCancel').classList.add('hidden');
+        document.getElementById('enRetry').classList.toggle('hidden', s.success);
         toast(s.success?'Voter enrolled':'Enrollment failed');
         refreshAll();
       }
@@ -417,6 +539,130 @@ function pollEnroll(){
 function cancelEnroll(){ jpost('/api/voters/enroll/cancel'); }
 function closeEnroll(){ clearInterval(enrollTimer);
   document.getElementById('enrollModal').classList.add('hidden'); }
+
+/* ---- settings: Telegram + internet Wi-Fi ---- */
+const $=id=>document.getElementById(id);
+let scanPending=false, detectPending=false;
+
+function loadSettings(){
+  jget('/api/settings').then(s=>{
+    $('sTok').value='';
+    $('sTok').placeholder = s.tgTokenSet ? ('Saved ('+(s.tgTokenHint||'hidden')+') - leave blank to keep') : '123456789:AAH...';
+    $('sChat').value = s.tgChat||'';
+    $('sAuto').checked = !!s.autoFinal;
+    $('sStart').checked = !!s.notifyStart;
+    $('sSsid').value = s.wifiSsid||'';
+    $('sPass').value='';
+    $('sPass').placeholder = s.wifiPassSet ? 'Saved - leave blank to keep' : 'Wi-Fi password';
+  }).catch(()=>{});
+}
+function saveTg(){
+  const body={tgChat:$('sChat').value.trim(), autoFinal:$('sAuto').checked, notifyStart:$('sStart').checked};
+  const tok=$('sTok').value.trim(); if(tok) body.tgToken=tok;
+  return jpost('/api/settings',body).then(d=>{
+    toast(d.ok?'Telegram settings saved':(d.error||'Failed'));
+    if(d.ok) loadSettings();
+    return d.ok;
+  });
+}
+function detectChat(){
+  // Save a freshly pasted token first, so Detect uses it.
+  const pre = $('sTok').value.trim() ? saveTg() : Promise.resolve(true);
+  pre.then(ok=>{
+    if(!ok) return;
+    jpost('/api/telegram/detect').then(d=>{
+      if(!d.ok){toast(d.error||'Failed');return;}
+      detectPending=true; $('sDetect').textContent='Looking for your chat...';
+      setTimeout(refreshUplink,1500); setTimeout(refreshUplink,5000);
+    });
+  });
+}
+function tgTest(){ jpost('/api/telegram/test').then(d=>{
+  toast(d.ok?'Sending test message...':(d.error||'Failed'));
+  if(d.ok){ setTimeout(refreshUplink,1500); setTimeout(refreshUplink,6000); } }); }
+function tgSend(){ jpost('/api/telegram/send').then(d=>{
+  toast(d.ok?'Sending results...':(d.error||'Failed'));
+  if(d.ok){ setTimeout(refreshUplink,1500); setTimeout(refreshUplink,6000); } }); }
+
+function saveWifi(){
+  const ssid=$('sSsid').value.trim();
+  if(!ssid){toast('Enter or scan a Wi-Fi name');return;}
+  jpost('/api/settings',{wifiSsid:ssid, wifiPass:$('sPass').value}).then(d=>{
+    toast(d.ok?'Saved - connecting...':(d.error||'Failed'));
+    if(d.ok){ loadSettings(); setTimeout(refreshUplink,2000); }
+  });
+}
+function forgetWifi(){
+  if(!confirm('Disconnect from the internet Wi-Fi? Telegram will stop working until you set it again.'))return;
+  jpost('/api/settings',{wifiSsid:''}).then(d=>{
+    toast(d.ok?'Disconnected':(d.error||'Failed')); if(d.ok){ loadSettings(); refreshUplink(); } });
+}
+function scanWifi(){
+  jpost('/api/wifi/scan').then(d=>{
+    if(!d.ok){toast(d.error||'Failed');return;}
+    scanPending=true; $('netList').innerHTML='<div class="note">Scanning (a few seconds)...</div>';
+    setTimeout(refreshUplink,3000); setTimeout(refreshUplink,6000);
+  });
+}
+function pickNet(i){ const n=lastNets[i]; if(!n)return; $('sSsid').value=n.ssid;
+  $('netList').innerHTML=''; $('sPass').value=''; $('sPass').focus(); }
+
+let lastNets=[];
+function sig(r){ return r>-60?'strong':r>-70?'good':r>-80?'fair':'weak'; }
+function ago(s){ return s<60? s+'s ago' : s<3600? Math.floor(s/60)+' min ago' : Math.floor(s/3600)+' h ago'; }
+function dot(id,cls){ $(id).className='dotc'+(cls?' '+cls:''); }
+
+function refreshUplink(){ jget('/api/uplink/status').then(renderUplink).catch(()=>{}); }
+function renderUplink(s){
+  const w=s.wifi, t=s.telegram;
+  let wt, wc='';
+  if(w.state==='online'){ wt='Connected to '+w.ssid+' ('+w.ip+', '+sig(w.rssi)+' signal)'; wc='ok'; }
+  else if(w.state==='connecting'){ wt='Connecting to '+w.ssid+'...'; wc='warn'; }
+  else if(w.state==='failed'){ wt='Could not connect to '+w.ssid+': '+w.reason+'. Retrying in '+Math.ceil((w.retryIn||0)/60)+' min.'; wc='bad'; }
+  else { wt='Not set up - the machine has no internet connection.'; }
+  $('wState').textContent=wt; dot('wDot',wc);
+
+  let tt, tc='';
+  if(!t.ready){ tt='Not set up yet - see the steps below.'; }
+  else if(t.busy){ tt='Sending...'; tc='warn'; }
+  else if(t.lastAgo<0){ tt='Ready. Nothing sent yet.'; tc='ok'; }
+  else { tt=t.lastMsg+' ('+ago(t.lastAgo)+')'; tc=t.lastOk?'ok':'bad'; }
+  if(t.pendingFinal) tt+=' Final results are queued and will be retried.';
+  $('tgState').textContent=tt; dot('tgDot',tc);
+  $('rTg').textContent=t.ready? tt : 'Telegram is not set up. Go to Settings.'; dot('rTgDot',t.ready?tc:'');
+
+  if(t.detectMsg){
+    $('sDetect').textContent=t.detectMsg;
+    if(detectPending && t.detectMsg.indexOf('Looking')!==0){
+      detectPending=false;
+      if(t.detectMsg.indexOf('Found')===0) jget('/api/settings').then(x=>{ $('sChat').value=x.tgChat||''; });
+    }
+  }
+  if(scanPending && !s.scanBusy){
+    scanPending=false; lastNets=s.networks||[];
+    $('netList').innerHTML = lastNets.length ? '' : '<div class="note">No networks found. Move closer to the router and scan again.</div>';
+    lastNets.forEach((n,i)=>{
+      const r=document.createElement('div'); r.className='net';
+      r.innerHTML='<span>'+esc(n.ssid)+(n.open?' (open)':'')+'</span><span class="s">'+sig(n.rssi)+'</span>';
+      r.onclick=()=>pickNet(i); $('netList').appendChild(r);
+    });
+  }
+}
+
+function renderDevice(d){
+  const up=d.uptime, hrs=Math.floor(up/3600), mins=Math.floor((up%3600)/60);
+  const bad = /Brownout|Crash|Watchdog/.test(d.reset);
+  const rows=[
+    ['Firmware','v'+esc(d.fw)],
+    ['Running for', hrs+' h '+mins+' min'],
+    ['Last restart','<span class="'+(bad?'bad':'')+'">'+esc(d.reset)+'</span>'],
+    ['Card reader', d.nfc?'<span class="good">OK</span>'+(d.nfcRecoveries?' (auto-recovered '+d.nfcRecoveries+'x)':''):'<span class="bad">Not responding</span>'],
+    ['Fingerprint sensor', d.fp?'<span class="good">OK</span>':'<span class="bad">Not responding</span>'],
+    ['Free memory', Math.round(d.heap/1024)+' KB (lowest '+Math.round(d.minHeap/1024)+' KB)'],
+    ['Phones connected', d.apClients]
+  ];
+  $('devInfo').innerHTML=rows.map(r=>'<span class="k">'+r[0]+'</span><span>'+r[1]+'</span>').join('');
+}
 
 /* ---- boot ---- */
 if(TOKEN){ jget('/api/overview').then(()=>enterApp()).catch(()=>logout()); }
