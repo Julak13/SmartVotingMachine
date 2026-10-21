@@ -5,7 +5,7 @@ build/
 *.hex
 *.map
 # ...except the released firmware the browser updater (GitHub Pages) serves
-!docs/firmware/*.bin
+!docs/firmware/**/*.bin
 
 # Report documents (Chapter 4, user manual) stay private - the repo is public
 *.docx
