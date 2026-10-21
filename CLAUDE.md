@@ -37,11 +37,11 @@ WiFi/HTTP is pinned to **core 0** (with the radio stack) so HTTP jitter never de
 
 Other web→voter-task requests use the same request/execute pattern as enrollment: deleting a voter calls `VotingController::queueTemplateDelete(fid)`, and `run()` erases the AS608 slot at the top of its loop (before any enrollment, which may reuse that slot).
 
-### Voter-loop invariants (v1.1.0 — each fixes a field complaint)
+### Voter-loop invariants (v1.1.x — each fixes a field complaint)
 
 - `selectCandidate()` must always be able to return: `SESSION_IDLE_MS` with no button press → `SELECT_TIMEOUT`. A loop without an exit froze the whole machine for every later voter.
 - `FpSensor::search()` distinguishes `FP_BAD_IMAGE` (retry silently) from `FP_NO_MATCH` (counts toward `FP_MAX_ATTEMPTS`). Never treat a smudged read as a rejection.
-- PN532: `NFC_PASSIVE_RETRIES` makes the chip end each card search on its own **inside** `NFC_READ_TIMEOUT_MS`. If the host wait expires first, the next command collides with the unfinished one and reads fail intermittently. Keep that ordering if you touch either value. `NFCReader::maintain()` self-tests every 5 s and hardware-resets via RST (GPIO5).
+- PN532: **do not** add `setPassiveActivationRetries()` or periodic `getFirmwareVersion()`/reset health checks between card polls. v1.1.0 did both and the deployed reader went "not responding"; v1.1.1 restored v1.0's behaviour (configure once at boot, 250 ms `readPassiveTargetID` polls, only a reader missing at boot is retried). Suspected cause: the Adafruit library's `setPassiveActivationRetries()` never reads its reply frame. Any NFC change must be tested on the real reader with Serial open before release.
 - A card just used is ignored until lifted for `CARD_REPEAT_IGNORE_MS`; enrollment seeds this with the new card.
 - Enrollment refuses a finger already enrolled to another voter (two templates of one finger make that voter unable to vote). `sweepOrphanTemplates()` runs once in `setup()` to clear slots no voter owns; it deliberately does nothing when the voter list is empty.
 

@@ -1,23 +1,22 @@
 // =====================================================================
 //  NFCReader.cpp
+//
+//  v1.1.1: card reading is back to exactly what v1.0 did - configure the
+//  reader once at boot, then only ever send card polls. v1.1.0 added a
+//  bounded card search (setPassiveActivationRetries) and a periodic
+//  getFirmwareVersion health check that hardware-reset the reader; on the
+//  deployed unit that left the reader "not responding". Root cause not yet
+//  confirmed on hardware, so the safe behaviour is restored. A reader that
+//  is still missing is retried, but a working reader is never poked
+//  between polls.
 // =====================================================================
 #include "NFCReader.h"
 
 bool NFCReader::init() {
-  // begin() pulses RST (GPIO5) and wakes the chip, so this is also the
-  // recovery path for a reader that has wedged. Wire.begin() was already
-  // called with our pins in the .ino; the library's own begin is a no-op
-  // on an already-started bus.
-  _nfc.begin();
+  _nfc.begin();                          // pulses RST, wakes the chip
   uint32_t ver = _nfc.getFirmwareVersion();
   if (!ver) { _ok = false; return false; }
-
-  _nfc.SAMConfig();
-  // The library default is "search forever". Our host-side wait would then
-  // expire first and leave the chip mid-command; the next command collides
-  // with it and reads fail until they resync. A bounded search makes the
-  // chip always answer (with "no card") before we stop waiting.
-  _nfc.setPassiveActivationRetries(NFC_PASSIVE_RETRIES);
+  _nfc.SAMConfig();                      // configure to read RFID tags
   _ok = true;
   return true;
 }
@@ -31,24 +30,16 @@ bool NFCReader::begin() {
 }
 
 bool NFCReader::selfTest() {
+  if (_ok) return true;                  // never re-initialise a working reader
   _lastCheck = millis();
-  if (_ok && _nfc.getFirmwareVersion()) return true;
-
-  bool wasOk = _ok;
   bool ok = init();
-  if (ok && wasOk) {
-    _recoveries++;
-    Serial.println(F("[NFC] reader stopped answering - reset and recovered"));
-  } else if (ok) {
-    Serial.println(F("[NFC] reader came online"));
-  } else if (wasOk) {
-    Serial.println(F("[NFC] reader not answering"));
-  }
+  if (ok) { _recoveries++; Serial.println(F("[NFC] reader came online")); }
   return ok;
 }
 
 void NFCReader::maintain() {
-  if (millis() - _lastCheck >= NFC_HEALTH_MS) selfTest();
+  if (_ok) return;
+  if (millis() - _lastCheck >= NFC_RETRY_MS) selfTest();
 }
 
 String NFCReader::readUID(uint16_t timeoutMs) {

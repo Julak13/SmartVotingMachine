@@ -7,7 +7,7 @@
 #include <Arduino.h>
 
 #define FW_NAME     "SmartVotingMachine"
-#define FW_VERSION  "1.1.0"
+#define FW_VERSION  "1.1.1"
 
 // ---------------------------------------------------------------------
 //  WiFi Access Point  (the machine is its OWN network - always on)
@@ -83,16 +83,11 @@
 #define ENROLL_NFC_TIMEOUT_MS  15000 // wait for card during enrollment
 #define ENROLL_FP_TIMEOUT_MS   15000 // wait for finger during enrollment
 
-// NFC. The PN532 is told to give up its own card search after
-// NFC_PASSIVE_RETRIES attempts, which must end well inside
-// NFC_READ_TIMEOUT_MS. That ordering matters: if our wait expires while the
-// chip is still searching (its default is "search forever"), the next
-// command collides with the unfinished one and reads fail until the two
-// drift back in step. 5 attempts stays inside 1.5 s even at a pessimistic
-// ~250 ms per attempt; the loop simply polls again straight away.
-#define NFC_READ_TIMEOUT_MS    1500  // host-side safety limit for one poll
-#define NFC_PASSIVE_RETRIES    0x05  // chip-side search limit
-#define NFC_HEALTH_MS          5000  // idle self-test; hardware-reset if silent
+// NFC - same timing as v1.0, which worked on the deployed reader.
+// (v1.1.0 bounded the card search and added periodic health checks;
+// that left the reader unresponsive, so it was rolled back in v1.1.1.)
+#define NFC_READ_TIMEOUT_MS    250   // per poll while waiting for a card
+#define NFC_RETRY_MS           5000  // retry a reader that was not found
 #define CARD_REPEAT_IGNORE_MS  2500  // a card left on the reader is ignored
                                      // until it has been lifted this long
 

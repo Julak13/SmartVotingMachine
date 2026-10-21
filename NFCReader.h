@@ -4,10 +4,9 @@
 //  Reads the UID of an ISO14443A card (MIFARE Classic/NTAG/etc.) and
 //  returns it as an uppercase hex string.
 //
-//  Self-healing: the reader is periodically asked for its firmware
-//  version while idle. If it has stopped answering it is hardware-reset
-//  through its RST line (GPIO5) and re-configured, so a stuck reader
-//  recovers by itself instead of needing a power cycle.
+//  Configured once at boot. A reader that was not found is retried every
+//  NFC_RETRY_MS; a working reader is never re-initialised or sent anything
+//  but card polls (see NFCReader.cpp for why).
 // =====================================================================
 #include <Arduino.h>
 #include <Adafruit_PN532.h>
@@ -21,12 +20,10 @@ public:
   // Poll for a card. Returns the UID hex string, or "" if none seen.
   String readUID(uint16_t timeoutMs);
 
-  // Call from the idle loop: every NFC_HEALTH_MS checks the chip still
-  // answers and recovers it if not. Also brings up a reader that was
-  // missing at boot.
+  // Call from the idle loop: retries a reader that is not ready yet.
   void maintain();
 
-  // Immediate check + recovery. Returns ready().
+  // true if ready; otherwise tries to bring the reader up once.
   bool selfTest();
 
   uint32_t recoveries() const { return _recoveries; }

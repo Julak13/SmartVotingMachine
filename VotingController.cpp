@@ -340,7 +340,7 @@ void VotingController::runEnrollment() {
   };
 
   if (!_fp->ready()) { fail("Fingerprint sensor offline"); return; }
-  // selfTest() resets a wedged reader rather than giving up on it.
+  // selfTest() brings up a reader that was not found at boot.
   if (!_nfc->selfTest()) { fail("NFC reader is not responding - check its wiring and power"); return; }
 
   // ---- step 1: first finger image ----
@@ -395,8 +395,8 @@ void VotingController::runEnrollment() {
 
   // ---- step 5: capture NFC UID ----
   setEnroll(5, "Tap the NFC card");
-  // Make sure the reader is answering before asking anyone to tap; this
-  // resets it if it has wedged since its last self-test.
+  // Make sure the reader is up before asking anyone to tap (brings up a
+  // reader that was not found at boot).
   if (!_nfc->selfTest()) {
     _fp->remove(fid);
     fail("NFC reader is not responding - check its wiring and power");
