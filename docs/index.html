@@ -54,7 +54,7 @@ footer{margin-top:28px;color:var(--mut);font-size:13px}
   </div>
 
   <div class="card">
-    <h2>Install update <span class="ver" id="ver">v1.1.1</span></h2>
+    <h2>Install update <span class="ver" id="ver">v1.1.2</span></h2>
     <div class="install">
       <esp-web-install-button manifest="manifest.json">
         <button slot="activate" class="go">&#x26A1; Connect &amp; install</button>
@@ -82,7 +82,7 @@ footer{margin-top:28px;color:var(--mut);font-size:13px}
       <li>Wait until it shows the install is complete.</li>
       <li>Press the <b>EN</b> (reset) button on the board, or unplug and replug it. The machine plays its
         ready chime and shows <i>System Ready</i>.</li>
-      <li>Check: on the dashboard, open <b>Settings &rarr; Device</b>. It should say <b>Firmware v1.1.1</b>.</li>
+      <li>Check: on the dashboard, open <b>Settings &rarr; Device</b>. It should say <b>Firmware v1.1.2</b>.</li>
     </ol>
   </div>
 
@@ -109,7 +109,7 @@ footer{margin-top:28px;color:var(--mut);font-size:13px}
   <div class="card">
     <h2>What's new</h2>
     <ul>
-      <li><b>v1.1.1:</b> the card reader works exactly as in v1.0 again. (v1.1.0 changed how the reader is set up, and on the real machine that stopped it responding.)</li>
+      <li><b>v1.1.2:</b> fixes the machine staying on <i>Tap NFC Card</i> when you try to vote, including straight after registering a voter. Cards are now read reliably the first time, at enrollment and when voting.</li>
       <li>The machine no longer freezes if a voter walks away on the candidate screen (30-second timeout).</li>
       <li>Fingerprints: a smudged touch is retried instead of rejected; a finger already registered to someone else is refused at enrollment.</li>
       <li>"Card already registered to <i>name</i>" tells you exactly which voter to delete.</li>

@@ -41,6 +41,7 @@ void VotingController::run() {
 
     // 2) Election must be open.
     if (store.status() != ELECTION_RUNNING) {
+      _nfc->poll();              // discard taps now, so none is acted on later
       _d->show("Election Closed", "Please wait...");
       vTaskDelay(pdMS_TO_TICKS(500));
       continue;
@@ -52,8 +53,8 @@ void VotingController::run() {
       continue;
     }
 
-    // 3) Idle: wait for an NFC card.
-    String uid = _nfc->readUID(NFC_READ_TIMEOUT_MS);
+    // 3) Idle: wait for an NFC card (non-blocking - see NFCReader.cpp).
+    String uid = _nfc->poll();
     uint32_t now = millis();
     if (uid.length()) {
       if (uid == _lastUid && (now - _lastSeenMs) < CARD_REPEAT_IGNORE_MS) {
@@ -61,6 +62,7 @@ void VotingController::run() {
         _lingerMs   = now;
       } else {
         handleVoter(uid);
+        _nfc->flush();           // ignore anything tapped during the session
         _lastUid    = uid;
         _lastSeenMs = millis();
         _lingerMs   = 0;
@@ -68,9 +70,10 @@ void VotingController::run() {
       }
     }
     // "Remove card" only while a used card is actually still on the reader.
-    bool lingering = _lingerMs && (millis() - _lingerMs) < 700;
+    // (A card left there is re-detected about every 300 ms.)
+    bool lingering = _lingerMs && (millis() - _lingerMs) < 900;
     _d->show("Smart Voting", lingering ? "Remove card" : "Tap NFC Card");
-    if (!uid.length()) vTaskDelay(pdMS_TO_TICKS(10));
+    vTaskDelay(pdMS_TO_TICKS(20));
   }
 }
 
@@ -404,12 +407,12 @@ void VotingController::runEnrollment() {
   }
   String uid;
   {
+    _nfc->flush();             // only a card presented from now on counts
     uint32_t t0 = millis();
     while (millis() - t0 < ENROLL_NFC_TIMEOUT_MS) {
       if (enrollCancelled()) { _fp->remove(fid); fail("Cancelled"); return; }
-      uid = _nfc->readUID(NFC_READ_TIMEOUT_MS);
+      uid = _nfc->poll();
       if (uid.length()) break;
-      _nfc->maintain();
       vTaskDelay(pdMS_TO_TICKS(20));
     }
   }
@@ -426,10 +429,11 @@ void VotingController::runEnrollment() {
     return;
   }
 
-  // The new voter's card is probably still on the reader. Without this,
-  // if polls are open it would immediately start a voting session.
-  _lastUid    = uid;
-  _lastSeenMs = millis();
+  // Deliberately NOT marked as "just used": v1.1.0/1.1.1 did, so a freshly
+  // registered card was ignored until it had been off the reader for
+  // CARD_REPEAT_IGNORE_MS - right after registering, the machine looked
+  // stuck on "Tap NFC Card". If polls are open, the new voter's tap should
+  // simply start their vote.
 
   // ---- commit voter record ----
   if (!store.addVoter(name, fid, uid)) {

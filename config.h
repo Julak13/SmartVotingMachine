@@ -7,7 +7,7 @@
 #include <Arduino.h>
 
 #define FW_NAME     "SmartVotingMachine"
-#define FW_VERSION  "1.1.1"
+#define FW_VERSION  "1.1.2"
 
 // ---------------------------------------------------------------------
 //  WiFi Access Point  (the machine is its OWN network - always on)
@@ -83,12 +83,12 @@
 #define ENROLL_NFC_TIMEOUT_MS  15000 // wait for card during enrollment
 #define ENROLL_FP_TIMEOUT_MS   15000 // wait for finger during enrollment
 
-// NFC - same timing as v1.0, which worked on the deployed reader.
-// (v1.1.0 bounded the card search and added periodic health checks;
-// that left the reader unresponsive, so it was rolled back in v1.1.1.)
-#define NFC_READ_TIMEOUT_MS    250   // per poll while waiting for a card
+// NFC: one card search is armed and left running until a card answers
+// (see NFCReader.cpp). No read timeout - timing out and re-sending the
+// search is what left the machine stuck on "Tap NFC Card".
+#define NFC_REARM_MS           200   // pause before arming the next search
 #define NFC_RETRY_MS           5000  // retry a reader that was not found
-#define CARD_REPEAT_IGNORE_MS  2500  // a card left on the reader is ignored
+#define CARD_REPEAT_IGNORE_MS  1200  // a card left on the reader is ignored
                                      // until it has been lifted this long
 
 // Voter session

@@ -1,4 +1,4 @@
-# Smart Electronic Voting Machine (ESP32) &nbsp;·&nbsp; v1.1.1
+# Smart Electronic Voting Machine (ESP32) &nbsp;·&nbsp; v1.1.2
 
 A secure electronic voting machine built on an **ESP32 DevKit V1**. Two-factor voter
 authentication (NFC card **+** fingerprint), a voter-only LCD/button interface, and a
@@ -54,7 +54,7 @@ Voting never depends on that link.
 | `Display.h/.cpp` | 16×2 I2C LCD wrapper (only rewrites lines that changed) |
 | `Buttons.h` | Debounced active-LOW button with edge detection |
 | `FpSensor.h/.cpp` | AS608 fingerprint: 1:N search + enrollment primitives |
-| `NFCReader.h/.cpp` | PN532 UID reader (I2C), configured once at boot |
+| `NFCReader.h/.cpp` | PN532 UID reader (I2C), non-blocking armed search |
 | `Feedback.h/.cpp` | Buzzer + green/red status LEDs (voter feedback) |
 | `VotingController.h/.cpp` | Voter state machine **and** enrollment workflow |
 | `AdminServer.h/.cpp` | REST API + serves the dashboard |
@@ -117,7 +117,8 @@ Robustness (v1.1.x):
   can never freeze the machine.
 * A smudged fingerprint is re-imaged rather than rejected; 3 clean non-matching reads reject.
 * A card left on the reader shows *Remove card* instead of starting a new session.
-* NFC card reading is exactly as in v1.0 (see §10 — the v1.1.0 change was rolled back).
+* Cards are read without timeouts (one search armed until a card answers), which fixes the
+  machine sitting on *Tap NFC Card* and the old "tap several times" (see §10).
 
 ---
 
@@ -222,18 +223,22 @@ To publish a new version: build with the settings in §7, copy
   `JsonDocument`s. A Telegram send needs ~40 KB of heap for TLS while it runs.
 * **AS608** stores up to 127 templates — `MAX_VOTERS`/`FP_MAX_ID` are bounded to match.
 * WiFi/HTTP/Telegram run on **core 0** with the radio stack; voter hardware on **core 1**.
-* NFC timing is v1.0's (250 ms polls, chip default search). See §10 for the rolled-back change.
+* NFC is non-blocking: one card search runs in the PN532 and the voter loop only reads its
+  1-byte I2C status until a card answers. See §10.
 
 ## 10. Error-handling strategy
 
 * **Sensors**: failures show on the LCD and in Settings → Device. A reader missing at boot is
   retried every 5 s; a working reader is never re-initialised.
-* **NFC rollback (v1.1.1):** v1.1.0 bounded the PN532 card search (`setPassiveActivationRetries`)
-  and ran a `getFirmwareVersion` health check every 5 s that hardware-reset the reader on failure.
-  On the deployed unit the reader then reported "not responding", so v1.1.1 restores v1.0's NFC
-  behaviour exactly. Suspected cause (unconfirmed on hardware): the library's
-  `setPassiveActivationRetries()` never reads its reply, leaving host and chip out of step. Don't
-  reintroduce either change without testing on the real reader with the Serial Monitor open.
+* **NFC history.** v1.0–v1.1.1 called `readPassiveTargetID()` with a 250 ms timeout in a loop.
+  The PN532 keeps searching after the host gives up, so the next call landed on top of the running
+  command and the two fell out of step: taps went unnoticed and the machine sat on *Tap NFC Card*
+  (enrollment mostly worked because the reader is idle while the election is closed). v1.1.0 tried
+  a bounded search (`setPassiveActivationRetries`) plus periodic `getFirmwareVersion`/reset checks;
+  on the real machine the reader then reported "not responding", so that was rolled back in v1.1.1.
+  v1.1.2 follows the library's own `readMifareClassicIrq` example: arm one
+  `startPassiveTargetIDDetection()`, poll the 1-byte I2C status (no IRQ wire needed), read with
+  `readDetectedPassiveTargetID()`, re-arm. Never send another command while a search is armed.
 * **Vote commit** is atomic under the store mutex and re-validates the voted flag. The voted flag
   is persisted before the count.
 * **Enrollment** is fully reversible (the template is deleted again if a later step fails), refuses
